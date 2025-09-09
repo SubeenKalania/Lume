@@ -51,7 +51,9 @@ class StickyNotesApp extends StatelessWidget {
 }
 
 class StickyNotePage extends StatefulWidget {
-  const StickyNotePage({super.key});
+  const StickyNotePage({super.key, this.initialBackground});
+
+  final Color? initialBackground;
 
   @override
   State<StickyNotePage> createState() => _StickyNotePageState();
@@ -73,6 +75,20 @@ class _StickyNotePageState extends State<StickyNotePage> {
     final hsl = HSLColor.fromColor(c);
     final l = (hsl.lightness + amount).clamp(0.0, 1.0);
     return hsl.withLightness(l).toColor();
+  }
+
+  Color _randomPleasantColor() {
+    final seed = DateTime.now().microsecondsSinceEpoch % 360;
+    return HSLColor.fromAHSL(1, seed.toDouble(), 0.55, 0.70).toColor();
+  }
+
+  void _openNewNote() {
+    final color = _randomPleasantColor();
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => StickyNotePage(initialBackground: color),
+      ),
+    );
   }
 
   Color _deriveContrast(Color base, double magnitude) {
@@ -135,8 +151,8 @@ class _StickyNotePageState extends State<StickyNotePage> {
     // Keep buttons in sync with keyboard shortcuts and selection changes
     _quill.addListener(_syncFromController);
     _quill.onSelectionChanged = (_) => _syncFromController();
-    // Initialize theme derived shades
-    _applyTheme(_background);
+    // Initialize theme derived shades (allow caller to override initial color)
+    _applyTheme(widget.initialBackground ?? _background);
   }
 
   @override
@@ -395,7 +411,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                       children: [
                         // Left: plus button
                         IconButton(
-                          onPressed: () {},
+                          onPressed: _openNewNote,
                           icon: const Icon(Icons.add, color: Colors.white),
                           splashRadius: 18,
                           tooltip: 'New note',
