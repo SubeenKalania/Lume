@@ -297,11 +297,23 @@ class _StickyNotePageState extends State<StickyNotePage> {
                 ),
                 child: Container(
                   color: _background,
-                  child: QuillEditor.basic(
-                    controller: _quill,
-                    focusNode: _editorFocusNode,
-                    scrollController: _editorScrollController,
-                    config: QuillEditorConfig(
+                  child: Theme(
+                    data: Theme.of(context).copyWith(
+                      colorScheme: Theme.of(context).colorScheme.copyWith(
+                            primary: _uiShade,
+                            onPrimary: _background.computeLuminance() > 0.5
+                                ? Colors.black
+                                : Colors.white,
+                            onSurface: _uiShade,
+                            surface: _background,
+                          ),
+                    ),
+                    child: QuillEditor.basic(
+                      key: ValueKey<int>(_background.value),
+                      controller: _quill,
+                      focusNode: _editorFocusNode,
+                      scrollController: _editorScrollController,
+                      config: QuillEditorConfig(
                       placeholder: 'Start typing…',
                       autoFocus: false,
                       showCursor: true,
@@ -347,10 +359,11 @@ class _StickyNotePageState extends State<StickyNotePage> {
                           VerticalSpacing.zero,
                           VerticalSpacing.zero,
                           null,
-                        ),
-                      ),
-                    ),
+                       ),
+                     ),
                   ),
+                  ),
+                ),
                 ),
               ),
             ),
@@ -500,6 +513,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                       label: 'B',
                       isActive: _isInlineActive(Attribute.bold),
                       onTap: () => _toggleInline(Attribute.bold),
+                      color: _uiShade,
                     ),
                     const SizedBox(width: 12),
                     _TextActionButton(
@@ -507,6 +521,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                       fontStyle: FontStyle.italic,
                       isActive: _isInlineActive(Attribute.italic),
                       onTap: () => _toggleInline(Attribute.italic),
+                      color: _uiShade,
                     ),
                     const SizedBox(width: 12),
                     _TextActionButton(
@@ -514,6 +529,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                       underline: true,
                       isActive: _isInlineActive(Attribute.underline),
                       onTap: () => _toggleInline(Attribute.underline),
+                      color: _uiShade,
                     ),
                     const SizedBox(width: 12),
                     _TextActionButton(
@@ -521,6 +537,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                       strike: true,
                       isActive: _isInlineActive(Attribute.strikeThrough),
                       onTap: () => _toggleInline(Attribute.strikeThrough),
+                      color: _uiShade,
                     ),
                   ],
                 ),
@@ -540,6 +557,7 @@ class _TextActionButton extends StatelessWidget {
   final bool underline;
   final bool strike;
   final bool isActive;
+  final Color? color;
 
   const _TextActionButton({
     required this.label,
@@ -548,6 +566,7 @@ class _TextActionButton extends StatelessWidget {
     this.underline = false,
     this.strike = false,
     this.isActive = false,
+    this.color,
   });
 
   @override
@@ -562,7 +581,7 @@ class _TextActionButton extends StatelessWidget {
     }
 
     final activeBg = Colors.black.withOpacity(0.07);
-    final activeFg = Theme.of(context).colorScheme.onSurface;
+    final activeFg = color ?? Theme.of(context).colorScheme.onSurface;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
