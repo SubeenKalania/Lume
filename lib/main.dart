@@ -1,10 +1,11 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'package:flutter_quill/flutter_quill.dart' hide Text;
+import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 // Removed persistence-related imports
 import 'package:bitsdojo_window/bitsdojo_window.dart';
 
-// Color palette for the mockup-style UI
+// Default color palette for the mockup-style UI (can be overridden at runtime)
 const Color kHeaderColor = Color(0xFF6A3FB5); // dark purple header
 const Color kHeaderAccent = Color(0xFF8A4FFF); // thin accent line under header
 const Color kBackgroundColor = Color(0xFFE3D1FF); // light purple canvas
@@ -62,6 +63,62 @@ class _StickyNotePageState extends State<StickyNotePage> {
   late FocusNode _editorFocusNode;
   late ScrollController _editorScrollController;
 
+  // Theme state (derived shades)
+  Color _background = kBackgroundColor;
+  Color _headerShade = kHeaderColor;
+  Color _accentShade = kHeaderAccent;
+  Color _uiShade = const Color(0xFF2E1065); // deep purple fallback
+
+  Color _shiftLightness(Color c, double amount) {
+    final hsl = HSLColor.fromColor(c);
+    final l = (hsl.lightness + amount).clamp(0.0, 1.0);
+    return hsl.withLightness(l).toColor();
+  }
+
+  Color _deriveContrast(Color base, double magnitude) {
+    final hsl = HSLColor.fromColor(base);
+    final sign = hsl.lightness >= 0.5 ? -1.0 : 1.0;
+    return _shiftLightness(base, sign * magnitude);
+  }
+
+  void _applyTheme(Color base) {
+    _background = base;
+    _headerShade = _deriveContrast(base, 0.35);
+    _accentShade = _deriveContrast(base, 0.20);
+    _uiShade = _deriveContrast(base, 0.45);
+    setState(() {});
+  }
+
+  Future<void> _openThemePicker() async {
+    Color temp = _background;
+    await showDialog(
+      context: context,
+      builder: (ctx) {
+        return AlertDialog(
+          title: const Text('Choose theme color'),
+          content: SingleChildScrollView(
+            child: ColorPicker(
+              pickerColor: temp,
+              onColorChanged: (c) => temp = c,
+              enableAlpha: false,
+              labelTypes: const [],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () {
+                _applyTheme(temp);
+                Navigator.of(ctx).pop();
+              },
+              child: const Text('Use Color'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   // Persistent inline-style toggles
   bool _boldOn = false;
   bool _italicOn = false;
@@ -78,6 +135,8 @@ class _StickyNotePageState extends State<StickyNotePage> {
     // Keep buttons in sync with keyboard shortcuts and selection changes
     _quill.addListener(_syncFromController);
     _quill.onSelectionChanged = (_) => _syncFromController();
+    // Initialize theme derived shades
+    _applyTheme(_background);
   }
 
   @override
@@ -219,9 +278,9 @@ class _StickyNotePageState extends State<StickyNotePage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: kBackgroundColor,
+      backgroundColor: _background,
       body: WindowBorder(
-        color: kHeaderColor,
+        color: _headerShade,
         width: 1,
         child: Stack(
           children: [
@@ -237,7 +296,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                   16 + kToolbarHeight + 8, // leave space for bottom toolbar
                 ),
                 child: Container(
-                  color: kBackgroundColor,
+                  color: _background,
                   child: QuillEditor.basic(
                     controller: _quill,
                     focusNode: _editorFocusNode,
@@ -248,14 +307,13 @@ class _StickyNotePageState extends State<StickyNotePage> {
                       showCursor: true,
                       onTapOutsideEnabled: false,
                       textSelectionThemeData: TextSelectionThemeData(
-                        cursorColor: Colors.deepPurple.shade900,
-                        selectionColor:
-                            Colors.deepPurple.shade400.withOpacity(0.35),
+                        cursorColor: _uiShade,
+                        selectionColor: _uiShade.withOpacity(0.35),
                       ),
                       customStyles: DefaultStyles(
                         paragraph: DefaultTextBlockStyle(
                           TextStyle(
-                            color: Colors.deepPurple.shade900,
+                            color: _uiShade,
                             fontSize: 18,
                             height: 1.30,
                             decoration: TextDecoration.none,
@@ -267,7 +325,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                         ),
                         lists: DefaultListBlockStyle(
                           TextStyle(
-                            color: Colors.deepPurple.shade900,
+                            color: _uiShade,
                             fontSize: 18,
                             height: 1.30,
                             decoration: TextDecoration.none,
@@ -280,8 +338,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                         ),
                         placeHolder: DefaultTextBlockStyle(
                           TextStyle(
-                            color: Colors.deepPurple.shade900
-                                .withOpacity(0.35),
+                            color: _uiShade.withOpacity(0.35),
                             fontSize: 18,
                             height: 1.30,
                             decoration: TextDecoration.none,
@@ -313,12 +370,12 @@ class _StickyNotePageState extends State<StickyNotePage> {
                         begin: Alignment.topCenter,
                         end: Alignment.bottomCenter,
                         colors: [
-                          kHeaderColor.withOpacity(0.70),
-                          kHeaderColor.withOpacity(0.55),
+                          _headerShade.withOpacity(0.70),
+                          _headerShade.withOpacity(0.55),
                         ],
                       ),
-                      border: const Border(
-                        bottom: BorderSide(color: kHeaderAccent, width: 2),
+                      border: Border(
+                        bottom: BorderSide(color: _accentShade, width: 2),
                       ),
                     ),
                     child: Row(
@@ -379,7 +436,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                       curve: Curves.easeOut,
                       opacity: _menuOpen ? 1 : 0,
                       child: Container(
-                        color: kBackgroundColor.withOpacity(0.78), // translucent drawer
+                        color: _background.withOpacity(0.78), // translucent drawer
                         child: Padding(
                           padding: const EdgeInsets.symmetric(horizontal: 12),
                           child: Align(
@@ -387,17 +444,22 @@ class _StickyNotePageState extends State<StickyNotePage> {
                             child: Row(
                               mainAxisSize: MainAxisSize.min,
                               children: [
-                                Icon(Icons.lock_outline, color: Colors.deepPurple.shade900),
+                                Icon(Icons.lock_outline, color: _uiShade),
                                 const SizedBox(width: 16),
-                                Icon(Icons.send, color: Colors.deepPurple.shade900),
+                                Icon(Icons.send, color: _uiShade),
                                 const SizedBox(width: 16),
-                                Icon(Icons.push_pin_outlined, color: Colors.deepPurple.shade900),
+                                Icon(Icons.push_pin_outlined, color: _uiShade),
                                 const SizedBox(width: 16),
-                                Icon(Icons.checklist_outlined, color: Colors.deepPurple.shade900),
+                                Icon(Icons.checklist_outlined, color: _uiShade),
                                 const SizedBox(width: 16),
-                                Icon(Icons.dashboard_customize_outlined, color: Colors.deepPurple.shade900),
+                                IconButton(
+                                  tooltip: 'Theme',
+                                  onPressed: _openThemePicker,
+                                  icon: Icon(Icons.dashboard_customize_outlined, color: _uiShade),
+                                  splashRadius: 18,
+                                ),
                                 const SizedBox(width: 16),
-                                Icon(Icons.delete_outline, color: Colors.deepPurple.shade900),
+                                Icon(Icons.delete_outline, color: _uiShade),
                               ],
                             ),
                           ),
@@ -423,6 +485,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                       tooltip: 'Bulleted list',
                       onPressed: _toggleBullets,
                       isActive: _isBulletsActive(),
+                      color: _uiShade,
                     ),
                     // Checkbox list toggle (cycles [ ] <-> [x])
                     _ToolIcon(
@@ -430,6 +493,7 @@ class _StickyNotePageState extends State<StickyNotePage> {
                       tooltip: 'Checkbox',
                       onPressed: _toggleCheckbox,
                       isActive: _isChecklistActive(),
+                      color: _uiShade,
                     ),
                     const SizedBox(width: 12),
                     _TextActionButton(
@@ -497,8 +561,8 @@ class _TextActionButton extends StatelessWidget {
       decoration = TextDecoration.lineThrough;
     }
 
-    final activeBg = Colors.deepPurple.shade100;
-    final activeFg = Colors.deepPurple.shade900;
+    final activeBg = Colors.black.withOpacity(0.07);
+    final activeFg = Theme.of(context).colorScheme.onSurface;
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(8),
@@ -528,18 +592,21 @@ class _ToolIcon extends StatelessWidget {
   final String? tooltip;
   final VoidCallback onPressed;
   final bool isActive;
+  final Color? color;
 
   const _ToolIcon({
     required this.icon,
     required this.onPressed,
     this.tooltip,
     this.isActive = false,
+    this.color,
   });
 
   @override
   Widget build(BuildContext context) {
-    final activeBg = Colors.deepPurple.shade100;
-    final iconColor = Colors.deepPurple.shade900;
+    final activeBg = Colors.black.withOpacity(0.07);
+    final iconColor = (color ?? Theme.of(context).colorScheme.onSurface)
+        .withOpacity(0.85);
     return Container(
       decoration: BoxDecoration(
         color: isActive ? activeBg : Colors.transparent,
