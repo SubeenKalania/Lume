@@ -38,6 +38,10 @@ class StickyNotesApp extends StatelessWidget {
       theme: ThemeData(
         scaffoldBackgroundColor: kBackgroundColor,
         colorScheme: ColorScheme.fromSeed(seedColor: kHeaderColor),
+        textSelectionTheme: TextSelectionThemeData(
+          cursorColor: Colors.deepPurple.shade900,
+          selectionColor: Colors.deepPurple.shade400.withOpacity(0.35),
+        ),
         useMaterial3: true,
       ),
       home: const StickyNotePage(),
@@ -55,42 +59,140 @@ class StickyNotePage extends StatefulWidget {
 class _StickyNotePageState extends State<StickyNotePage> {
   late QuillController _quill;
   bool _menuOpen = false;
+  late FocusNode _editorFocusNode;
+  late ScrollController _editorScrollController;
+
+  // Persistent inline-style toggles
+  bool _boldOn = false;
+  bool _italicOn = false;
+  bool _underlineOn = false;
+  bool _strikeOn = false;
   
 
   @override
   void initState() {
     super.initState();
     _quill = QuillController.basic();
+    _editorFocusNode = FocusNode();
+    _editorScrollController = ScrollController();
+    // Rebuild when selection/style changes so buttons can reflect active state
+    _quill.addListener(() => setState(() {}));
+    // Keep persistent toggles applied when the selection changes
+    _quill.onSelectionChanged = (_) => _applyPersistentToggles();
+    // Initialize toggled style to current persistent settings
+    _applyPersistentToggles();
   }
 
   @override
   void dispose() {
+    _editorFocusNode.dispose();
+    _editorScrollController.dispose();
     _quill.dispose();
     super.dispose();
   }
 
-  void _format(Attribute attribute) {
-    _quill.formatSelection(attribute);
+  // Toggle inline attributes like bold/italic/underline/strike
+  void _toggleInline(Attribute attribute) {
+    // Flip persistent state
+    switch (attribute.key) {
+      case 'bold':
+        _boldOn = !_boldOn;
+        break;
+      case 'italic':
+        _italicOn = !_italicOn;
+        break;
+      case 'underline':
+        _underlineOn = !_underlineOn;
+        break;
+      case 'strike':
+        _strikeOn = !_strikeOn;
+        break;
+    }
+
+    // If there is a selection, apply/remove formatting to that selection
+    final sel = _quill.selection;
+    if (!sel.isCollapsed) {
+      bool turningOn = true;
+      if (attribute.key == 'bold') turningOn = _boldOn;
+      else if (attribute.key == 'italic') turningOn = _italicOn;
+      else if (attribute.key == 'underline') turningOn = _underlineOn;
+      else if (attribute.key == 'strike') turningOn = _strikeOn;
+      _quill.formatSelection(
+        turningOn ? attribute : Attribute.clone(attribute, null),
+      );
+    }
+
+    // Always re-apply persistent toggled style for future typing
+    _applyPersistentToggles();
+    // Keep caret visible by retaining focus on editor
+    _editorFocusNode.requestFocus();
+    setState(() {});
   }
 
   void _toggleBullets() {
     final style = _quill.getSelectionStyle();
-    final isBulleted = style.attributes[Attribute.list.key]?.value == Attribute.ul.value;
+    final isBulleted =
+        style.attributes[Attribute.list.key]?.value == Attribute.ul.value;
     _quill.formatSelection(
       isBulleted ? Attribute.clone(Attribute.list, null) : Attribute.ul,
     );
+    _editorFocusNode.requestFocus();
   }
 
   void _toggleCheckbox() {
     final style = _quill.getSelectionStyle();
     final current = style.attributes[Attribute.list.key]?.value;
-    if (current == 'checked') {
-      _quill.formatSelection(Attribute.unchecked);
-    } else if (current == 'unchecked') {
-      _quill.formatSelection(Attribute.clone(Attribute.list, null));
-    } else {
-      _quill.formatSelection(Attribute.unchecked);
+    final isChecklist = current == 'checked' || current == 'unchecked';
+    _quill.formatSelection(
+      isChecklist ? Attribute.clone(Attribute.list, null) : Attribute.unchecked,
+    );
+    _editorFocusNode.requestFocus();
+  }
+
+  bool _isInlineActive(Attribute attribute) {
+    // Reflect persistent toggle state so the button stays highlighted
+    switch (attribute.key) {
+      case 'bold':
+        return _boldOn;
+      case 'italic':
+        return _italicOn;
+      case 'underline':
+        return _underlineOn;
+      case 'strike':
+        return _strikeOn;
+      default:
+        final attrs = _quill.getSelectionStyle().attributes;
+        return attrs.containsKey(attribute.key);
     }
+  }
+
+  void _applyPersistentToggles() {
+    // Explicitly set or clear each inline style so newly typed text respects
+    // the persistent toggles even inside a styled run.
+    final map = <String, Attribute>{
+      Attribute.bold.key:
+          _boldOn ? Attribute.bold : Attribute.clone(Attribute.bold, null),
+      Attribute.italic.key: _italicOn
+          ? Attribute.italic
+          : Attribute.clone(Attribute.italic, null),
+      Attribute.underline.key: _underlineOn
+          ? Attribute.underline
+          : Attribute.clone(Attribute.underline, null),
+      Attribute.strikeThrough.key: _strikeOn
+          ? Attribute.strikeThrough
+          : Attribute.clone(Attribute.strikeThrough, null),
+    };
+    _quill.forceToggledStyle(Style.attr(map));
+  }
+
+  bool _isBulletsActive() {
+    final attrs = _quill.getSelectionStyle().attributes;
+    return attrs[Attribute.list.key]?.value == Attribute.ul.value;
+  }
+
+  bool _isChecklistActive() {
+    final v = _quill.getSelectionStyle().attributes[Attribute.list.key]?.value;
+    return v == Attribute.unchecked.value || v == Attribute.checked.value;
   }
 
   @override
@@ -115,14 +217,47 @@ class _StickyNotePageState extends State<StickyNotePage> {
                 ),
                 child: Container(
                   color: kBackgroundColor,
-                  child: DefaultTextStyle.merge(
-                    style: TextStyle(
-                      color: Colors.deepPurple.shade900,
-                      fontSize: 18,
-                      height: 1.35,
-                    ),
-                    child: QuillEditor.basic(
-                      controller: _quill,
+                  child: QuillEditor.basic(
+                    controller: _quill,
+                    focusNode: _editorFocusNode,
+                    scrollController: _editorScrollController,
+                    config: QuillEditorConfig(
+                      placeholder: 'Start typing…',
+                      autoFocus: false,
+                      showCursor: true,
+                      onTapOutsideEnabled: false,
+                      textSelectionThemeData: TextSelectionThemeData(
+                        cursorColor: Colors.deepPurple.shade900,
+                        selectionColor:
+                            Colors.deepPurple.shade400.withOpacity(0.35),
+                      ),
+                      customStyles: DefaultStyles(
+                        paragraph: DefaultTextBlockStyle(
+                          TextStyle(
+                            color: Colors.deepPurple.shade900,
+                            fontSize: 18,
+                            height: 1.30,
+                            decoration: TextDecoration.none,
+                          ),
+                          const HorizontalSpacing(0, 0),
+                          VerticalSpacing.zero,
+                          VerticalSpacing.zero,
+                          null,
+                        ),
+                        placeHolder: DefaultTextBlockStyle(
+                          TextStyle(
+                            color: Colors.deepPurple.shade900
+                                .withOpacity(0.35),
+                            fontSize: 18,
+                            height: 1.30,
+                            decoration: TextDecoration.none,
+                          ),
+                          const HorizontalSpacing(0, 0),
+                          VerticalSpacing.zero,
+                          VerticalSpacing.zero,
+                          null,
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -249,17 +384,46 @@ class _StickyNotePageState extends State<StickyNotePage> {
                 child: Row(
                   children: [
                     // Bulleted list toggle
-                    _ToolIcon(icon: Icons.format_list_bulleted, tooltip: 'Bulleted list', onPressed: _toggleBullets),
+                    _ToolIcon(
+                      icon: Icons.format_list_bulleted,
+                      tooltip: 'Bulleted list',
+                      onPressed: _toggleBullets,
+                      isActive: _isBulletsActive(),
+                    ),
                     // Checkbox list toggle (cycles [ ] <-> [x])
-                    _ToolIcon(icon: Icons.check_box_outline_blank, tooltip: 'Checkbox', onPressed: _toggleCheckbox),
+                    _ToolIcon(
+                      icon: Icons.check_box_outline_blank,
+                      tooltip: 'Checkbox',
+                      onPressed: _toggleCheckbox,
+                      isActive: _isChecklistActive(),
+                    ),
                     const SizedBox(width: 12),
-                    _TextActionButton(label: 'B', onTap: () => _format(Attribute.bold)),
+                    _TextActionButton(
+                      label: 'B',
+                      isActive: _isInlineActive(Attribute.bold),
+                      onTap: () => _toggleInline(Attribute.bold),
+                    ),
                     const SizedBox(width: 12),
-                    _TextActionButton(label: 'i', fontStyle: FontStyle.italic, onTap: () => _format(Attribute.italic)),
+                    _TextActionButton(
+                      label: 'i',
+                      fontStyle: FontStyle.italic,
+                      isActive: _isInlineActive(Attribute.italic),
+                      onTap: () => _toggleInline(Attribute.italic),
+                    ),
                     const SizedBox(width: 12),
-                    _TextActionButton(label: 'U', underline: true, onTap: () => _format(Attribute.underline)),
+                    _TextActionButton(
+                      label: 'U',
+                      underline: true,
+                      isActive: _isInlineActive(Attribute.underline),
+                      onTap: () => _toggleInline(Attribute.underline),
+                    ),
                     const SizedBox(width: 12),
-                    _TextActionButton(label: 'S', strike: true, onTap: () => _format(Attribute.strikeThrough)),
+                    _TextActionButton(
+                      label: 'S',
+                      strike: true,
+                      isActive: _isInlineActive(Attribute.strikeThrough),
+                      onTap: () => _toggleInline(Attribute.strikeThrough),
+                    ),
                   ],
                 ),
               ),
@@ -277,6 +441,7 @@ class _TextActionButton extends StatelessWidget {
   final FontStyle? fontStyle;
   final bool underline;
   final bool strike;
+  final bool isActive;
 
   const _TextActionButton({
     required this.label,
@@ -284,6 +449,7 @@ class _TextActionButton extends StatelessWidget {
     this.fontStyle,
     this.underline = false,
     this.strike = false,
+    this.isActive = false,
   });
 
   @override
@@ -297,15 +463,21 @@ class _TextActionButton extends StatelessWidget {
       decoration = TextDecoration.lineThrough;
     }
 
+    final activeBg = Colors.deepPurple.shade100;
+    final activeFg = Colors.deepPurple.shade900;
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(6),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+      borderRadius: BorderRadius.circular(8),
+      child: Container(
+        decoration: BoxDecoration(
+          color: isActive ? activeBg : Colors.transparent,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
         child: Text(
           label,
           style: TextStyle(
-            color: Colors.deepPurple.shade900,
+            color: activeFg,
             fontSize: 20,
             fontWeight: label == 'B' ? FontWeight.w700 : FontWeight.w500,
             fontStyle: fontStyle,
@@ -321,18 +493,33 @@ class _ToolIcon extends StatelessWidget {
   final IconData icon;
   final String? tooltip;
   final VoidCallback onPressed;
+  final bool isActive;
 
-  const _ToolIcon({required this.icon, required this.onPressed, this.tooltip});
+  const _ToolIcon({
+    required this.icon,
+    required this.onPressed,
+    this.tooltip,
+    this.isActive = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return IconButton(
-      onPressed: onPressed,
-      tooltip: tooltip,
-      icon: Icon(icon, color: Colors.deepPurple.shade900, size: 22),
-      splashRadius: 18,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      constraints: const BoxConstraints(minWidth: 36, minHeight: kToolbarHeight),
+    final activeBg = Colors.deepPurple.shade100;
+    final iconColor = Colors.deepPurple.shade900;
+    return Container(
+      decoration: BoxDecoration(
+        color: isActive ? activeBg : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: IconButton(
+        onPressed: onPressed,
+        tooltip: tooltip,
+        icon: Icon(icon, color: iconColor, size: 22),
+        splashRadius: 18,
+        padding: const EdgeInsets.symmetric(horizontal: 4),
+        constraints:
+            const BoxConstraints(minWidth: 36, minHeight: kToolbarHeight),
+      ),
     );
   }
 }
