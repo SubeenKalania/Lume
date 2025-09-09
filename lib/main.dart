@@ -75,20 +75,42 @@ class _StickyNotePageState extends State<StickyNotePage> {
     _quill = QuillController.basic();
     _editorFocusNode = FocusNode();
     _editorScrollController = ScrollController();
-    // Rebuild when selection/style changes so buttons can reflect active state
-    _quill.addListener(() => setState(() {}));
-    // Keep persistent toggles applied when the selection changes
-    _quill.onSelectionChanged = (_) => _applyPersistentToggles();
-    // Initialize toggled style to current persistent settings
-    _applyPersistentToggles();
+    // Keep buttons in sync with keyboard shortcuts and selection changes
+    _quill.addListener(_syncFromController);
+    _quill.onSelectionChanged = (_) => _syncFromController();
   }
 
   @override
   void dispose() {
     _editorFocusNode.dispose();
     _editorScrollController.dispose();
+    _quill.removeListener(_syncFromController);
     _quill.dispose();
     super.dispose();
+  }
+
+  void _preserveSelection(VoidCallback action) {
+    final selBefore = _quill.selection;
+    action();
+    if (!selBefore.isCollapsed) {
+      _quill.updateSelection(selBefore, ChangeSource.local);
+    }
+  }
+
+  void _syncFromController() {
+    final attrs = _quill.getSelectionStyle().attributes;
+    final b = attrs.containsKey(Attribute.bold.key);
+    final i = attrs.containsKey(Attribute.italic.key);
+    final u = attrs.containsKey(Attribute.underline.key);
+    final s = attrs.containsKey(Attribute.strikeThrough.key);
+    if (b != _boldOn || i != _italicOn || u != _underlineOn || s != _strikeOn) {
+      setState(() {
+        _boldOn = b;
+        _italicOn = i;
+        _underlineOn = u;
+        _strikeOn = s;
+      });
+    }
   }
 
   // Toggle inline attributes like bold/italic/underline/strike
@@ -117,9 +139,11 @@ class _StickyNotePageState extends State<StickyNotePage> {
       else if (attribute.key == 'italic') turningOn = _italicOn;
       else if (attribute.key == 'underline') turningOn = _underlineOn;
       else if (attribute.key == 'strike') turningOn = _strikeOn;
-      _quill.formatSelection(
-        turningOn ? attribute : Attribute.clone(attribute, null),
-      );
+      _preserveSelection(() {
+        _quill.formatSelection(
+          turningOn ? attribute : Attribute.clone(attribute, null),
+        );
+      });
     }
 
     // Always re-apply persistent toggled style for future typing
@@ -133,9 +157,11 @@ class _StickyNotePageState extends State<StickyNotePage> {
     final style = _quill.getSelectionStyle();
     final isBulleted =
         style.attributes[Attribute.list.key]?.value == Attribute.ul.value;
-    _quill.formatSelection(
-      isBulleted ? Attribute.clone(Attribute.list, null) : Attribute.ul,
-    );
+    _preserveSelection(() {
+      _quill.formatSelection(
+        isBulleted ? Attribute.clone(Attribute.list, null) : Attribute.ul,
+      );
+    });
     _editorFocusNode.requestFocus();
   }
 
@@ -143,9 +169,11 @@ class _StickyNotePageState extends State<StickyNotePage> {
     final style = _quill.getSelectionStyle();
     final current = style.attributes[Attribute.list.key]?.value;
     final isChecklist = current == 'checked' || current == 'unchecked';
-    _quill.formatSelection(
-      isChecklist ? Attribute.clone(Attribute.list, null) : Attribute.unchecked,
-    );
+    _preserveSelection(() {
+      _quill.formatSelection(
+        isChecklist ? Attribute.clone(Attribute.list, null) : Attribute.unchecked,
+      );
+    });
     _editorFocusNode.requestFocus();
   }
 
@@ -167,21 +195,14 @@ class _StickyNotePageState extends State<StickyNotePage> {
   }
 
   void _applyPersistentToggles() {
-    // Explicitly set or clear each inline style so newly typed text respects
-    // the persistent toggles even inside a styled run.
-    final map = <String, Attribute>{
-      Attribute.bold.key:
-          _boldOn ? Attribute.bold : Attribute.clone(Attribute.bold, null),
-      Attribute.italic.key: _italicOn
-          ? Attribute.italic
-          : Attribute.clone(Attribute.italic, null),
-      Attribute.underline.key: _underlineOn
-          ? Attribute.underline
-          : Attribute.clone(Attribute.underline, null),
-      Attribute.strikeThrough.key: _strikeOn
-          ? Attribute.strikeThrough
-          : Attribute.clone(Attribute.strikeThrough, null),
-    };
+    // Only include attributes that are ON; omit others entirely so that
+    // keyboard shortcuts can freely toggle them off/on without being
+    // overridden by our forced style.
+    final map = <String, Attribute>{};
+    if (_boldOn) map[Attribute.bold.key] = Attribute.bold;
+    if (_italicOn) map[Attribute.italic.key] = Attribute.italic;
+    if (_underlineOn) map[Attribute.underline.key] = Attribute.underline;
+    if (_strikeOn) map[Attribute.strikeThrough.key] = Attribute.strikeThrough;
     _quill.forceToggledStyle(Style.attr(map));
   }
 
@@ -242,6 +263,19 @@ class _StickyNotePageState extends State<StickyNotePage> {
                           const HorizontalSpacing(0, 0),
                           VerticalSpacing.zero,
                           VerticalSpacing.zero,
+                          null,
+                        ),
+                        lists: DefaultListBlockStyle(
+                          TextStyle(
+                            color: Colors.deepPurple.shade900,
+                            fontSize: 18,
+                            height: 1.30,
+                            decoration: TextDecoration.none,
+                          ),
+                          const HorizontalSpacing(0, 0),
+                          VerticalSpacing.zero,
+                          VerticalSpacing.zero,
+                          null,
                           null,
                         ),
                         placeHolder: DefaultTextBlockStyle(
