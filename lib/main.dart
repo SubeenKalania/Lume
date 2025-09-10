@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'dart:ui';
 import 'package:flutter_quill/flutter_quill.dart' hide Text;
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
+import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:window_manager/window_manager.dart';
+import 'dart:convert';
 // Removed persistence-related imports
 import 'package:bitsdojo_window/bitsdojo_window.dart';
 
@@ -15,8 +18,25 @@ const double kHeaderHeight = 50;
 const double kDrawerHeight = 60;
 const double kToolbarHeight = 40;
 
-void main() {
-  runApp(const StickyNotesApp());
+Future<void> main(List<String> args) async {
+  WidgetsFlutterBinding.ensureInitialized();
+  try {
+    await windowManager.ensureInitialized();
+    await windowManager.setTitleBarStyle(
+      TitleBarStyle.hidden,
+      windowButtonVisibility: false,
+    );
+  } catch (_) {}
+  Color? initial;
+  if (args.isNotEmpty) {
+    try {
+      final Map<String, dynamic> data = jsonDecode(args.first);
+      final int? bg = data['bg'] as int?;
+      if (bg != null) initial = Color(bg);
+    } catch (_) {}
+  }
+
+  runApp(StickyNotesApp(initialBackground: initial));
 
   doWhenWindowReady(() {
     const initialSize = Size(600, 600);
@@ -29,7 +49,9 @@ void main() {
 }
 
 class StickyNotesApp extends StatelessWidget {
-  const StickyNotesApp({super.key});
+  const StickyNotesApp({super.key, this.initialBackground});
+
+  final Color? initialBackground;
 
   @override
   Widget build(BuildContext context) {
@@ -45,7 +67,7 @@ class StickyNotesApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: const StickyNotePage(),
+      home: StickyNotePage(initialBackground: initialBackground),
     );
   }
 }
@@ -82,13 +104,28 @@ class _StickyNotePageState extends State<StickyNotePage> {
     return HSLColor.fromAHSL(1, seed.toDouble(), 0.55, 0.70).toColor();
   }
 
-  void _openNewNote() {
-    final color = _randomPleasantColor();
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => StickyNotePage(initialBackground: color),
-      ),
-    );
+  Future<void> _openNewNote() async {
+    // Clone current theme; do not clone user data
+    final color = _background;
+    try {
+      final window = await DesktopMultiWindow.createWindow(
+        jsonEncode({'bg': color.value}),
+      );
+      // Best-effort positioning; APIs vary by platform/plugins, so keep it minimal.
+      // window.center();
+      // window.setTitle('Sticky Notes');
+      await window.show();
+    } catch (_) {
+      // Fallback: push a new page in the same window if multi-window is unavailable
+      if (mounted) {
+        // ignore: use_build_context_synchronously
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => StickyNotePage(initialBackground: color),
+          ),
+        );
+      }
+    }
   }
 
   Color _deriveContrast(Color base, double magnitude) {
