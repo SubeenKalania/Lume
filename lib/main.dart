@@ -717,10 +717,10 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
                           tooltip: 'New note',
                         ),
 
-                        // Middle: draggable empty area
-                        Expanded(
-                          child: MoveWindow(
-                            child: const SizedBox.expand(),
+                        // Middle: draggable empty area (custom drag using window_manager)
+                        const Expanded(
+                          child: _DragToMoveArea(
+                            child: SizedBox.expand(),
                           ),
                         ),
 
@@ -959,6 +959,57 @@ class _ToolIcon extends StatelessWidget {
 }
 
 // Placeholder widget removed per request
+
+class _DragToMoveArea extends StatefulWidget {
+  final Widget child;
+  const _DragToMoveArea({super.key, required this.child});
+
+  @override
+  State<_DragToMoveArea> createState() => _DragToMoveAreaState();
+}
+
+class _DragToMoveAreaState extends State<_DragToMoveArea> {
+  Offset? _dragOriginPointer;
+  Offset? _dragOriginWindow;
+
+  void _onPanStart(DragStartDetails d) async {
+    try {
+      _dragOriginPointer = d.globalPosition;
+      _dragOriginWindow = await windowManager.getPosition();
+      // Ensure this window receives focus before moving.
+      // ignore: discarded_futures
+      windowManager.focus().catchError((_) {});
+    } catch (_) {
+      _dragOriginPointer = null;
+      _dragOriginWindow = null;
+    }
+  }
+
+  void _onPanUpdate(DragUpdateDetails d) async {
+    if (_dragOriginPointer == null || _dragOriginWindow == null) return;
+    final delta = d.globalPosition - _dragOriginPointer!;
+    final target = _dragOriginWindow! + delta;
+    try {
+      await windowManager.setPosition(target);
+    } catch (_) {}
+  }
+
+  void _onPanEnd(DragEndDetails d) {
+    _dragOriginPointer = null;
+    _dragOriginWindow = null;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onPanStart: _onPanStart,
+      onPanUpdate: _onPanUpdate,
+      onPanEnd: _onPanEnd,
+      behavior: HitTestBehavior.translucent,
+      child: widget.child,
+    );
+  }
+}
 
 class WindowButtons extends StatelessWidget {
   const WindowButtons({super.key});
