@@ -436,11 +436,9 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
     final subIds = await DesktopMultiWindow.getAllSubWindowIds();
 
     if (isMain) {
-      if (subIds.isEmpty) {
-        exit(0);
-      } else {
-        await windowManager.hide();
-      }
+      // Never exit the app automatically; just hide the main window when
+      // closed. Other windows continue to run if any exist.
+      await windowManager.hide();
       return;
     }
 
@@ -467,13 +465,8 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
       List<int> subIds = await DesktopMultiWindow.getAllSubWindowIds();
 
       if (isMain) {
-        if (subIds.isEmpty) {
-          // No other windows remain; exit process so flutter run can rebuild cleanly
-          exit(0);
-        } else {
-          // Keep the process and engines alive for sub-windows; just hide main.
-          await windowManager.hide();
-        }
+        // Keep the process alive; hide the main window instead of exiting.
+        await windowManager.hide();
       } else {
         await windowManager.destroy();
         // Do not exit the app when a sub-window closes.
