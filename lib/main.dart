@@ -6,6 +6,7 @@ import 'package:flutter_quill/flutter_quill.dart' hide Text;
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:window_manager/window_manager.dart';
+import 'package:screen_retriever/screen_retriever.dart';
 import 'dart:convert';
 // Removed persistence-related imports
 import 'package:bitsdojo_window/bitsdojo_window.dart';
@@ -199,21 +200,54 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
     try {
       final size = await windowManager.getSize();
       final pos = await windowManager.getPosition();
-      // Place the new window immediately to the right of the current one
-      final newX = pos.dx + size.width + 16;
-      final newY = pos.dy;
+      // Determine visible work area of the display under the current window
+      List<Display> displays = [];
+      try {
+        displays = await screenRetriever.getAllDisplays();
+      } catch (_) {}
+      Display? display;
+      for (final d in displays) {
+        final vp = d.visiblePosition ?? const Offset(0, 0);
+        final vs = d.visibleSize ?? d.size;
+        if (pos.dx >= vp.dx && pos.dy >= vp.dy &&
+            pos.dx < vp.dx + vs.width && pos.dy < vp.dy + vs.height) {
+          display = d;
+          break;
+        }
+      }
+      display ??= await screenRetriever.getPrimaryDisplay();
+      final vp = display.visiblePosition ?? const Offset(0, 0);
+      final vs = display.visibleSize ?? display.size;
+      final left = vp.dx, top = vp.dy, right = vp.dx + vs.width, bottom = vp.dy + vs.height;
+
+      // New window size (slightly smaller than current)
+      final newW = size.width * 0.9;
+      final newH = size.height * 0.9;
+      final clampedW = newW.clamp(360.0, vs.width - 16.0);
+      final clampedH = newH.clamp(300.0, vs.height - 16.0);
+
+      // Prefer placing to the right; if off-screen, place to the left; else clamp within screen
+      double newX = pos.dx + size.width + 16;
+      double newY = pos.dy;
+      const margin = 8.0;
+      if (newX + clampedW > right - margin) {
+        newX = pos.dx - clampedW - 16;
+      }
+      if (newX < left + margin) newX = left + margin;
+      if (newY + clampedH > bottom - margin) newY = math.max(top + margin, bottom - margin - clampedH);
+
       final window = await DesktopMultiWindow.createWindow(
         jsonEncode({
           'bg': color.value,
-          'w': size.width,
-          'h': size.height,
+          'w': clampedW,
+          'h': clampedH,
           'x': newX,
           'y': newY,
         }),
       );
       // Show first to ensure the native window exists, then set the frame.
       await window.show();
-      await window.setFrame(Rect.fromLTWH(newX, newY, size.width, size.height));
+      await window.setFrame(Rect.fromLTWH(newX, newY, clampedW, clampedH));
     } catch (_) {
       // Fallback: push a new page in the same window if multi-window is unavailable
       if (mounted) {
@@ -419,11 +453,9 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
     } catch (_) {
       mainAlive = false;
     }
-    final isLastSub = subIds.length == 1 && subIds.first == widget.windowId;
     await windowManager.destroy();
-    if (isLastSub && (!mainAlive || !mainVisible)) {
-      Future.delayed(const Duration(milliseconds: 60), () => exit(0));
-    }
+    // Do not exit the app from a sub-window close. The process should remain
+    // alive as long as the main window exists (visible or hidden).
   }
 
   @override
@@ -443,23 +475,8 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
           await windowManager.hide();
         }
       } else {
-        final isLastSub = subIds.length == 1 && subIds.first == widget.windowId;
-        // Check if main window is alive by pinging it
-        bool mainAlive = true;
-        bool mainVisible = false;
-        try {
-          final res = await DesktopMultiWindow.invokeMethod(0, 'isVisible');
-          if (res is bool) mainVisible = res;
-        } catch (_) {
-          mainAlive = false;
-        }
         await windowManager.destroy();
-        if (isLastSub) {
-          // If main is gone or hidden, then we just closed the last visible window: exit.
-          if (!mainAlive || !mainVisible) {
-            Future.delayed(const Duration(milliseconds: 60), () => exit(0));
-          }
-        }
+        // Do not exit the app when a sub-window closes.
       }
     }();
   }
@@ -718,9 +735,9 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
                         ),
 
                         // Middle: draggable empty area (custom drag using window_manager)
-                        const Expanded(
-                          child: _DragToMoveArea(
-                            child: SizedBox.expand(),
+                        Expanded(
+                          child: DragToMoveArea(
+                            child: const SizedBox.expand(),
                           ),
                         ),
 
@@ -960,56 +977,7 @@ class _ToolIcon extends StatelessWidget {
 
 // Placeholder widget removed per request
 
-class _DragToMoveArea extends StatefulWidget {
-  final Widget child;
-  const _DragToMoveArea({super.key, required this.child});
-
-  @override
-  State<_DragToMoveArea> createState() => _DragToMoveAreaState();
-}
-
-class _DragToMoveAreaState extends State<_DragToMoveArea> {
-  Offset? _dragOriginPointer;
-  Offset? _dragOriginWindow;
-
-  void _onPanStart(DragStartDetails d) async {
-    try {
-      _dragOriginPointer = d.globalPosition;
-      _dragOriginWindow = await windowManager.getPosition();
-      // Ensure this window receives focus before moving.
-      // ignore: discarded_futures
-      windowManager.focus().catchError((_) {});
-    } catch (_) {
-      _dragOriginPointer = null;
-      _dragOriginWindow = null;
-    }
-  }
-
-  void _onPanUpdate(DragUpdateDetails d) async {
-    if (_dragOriginPointer == null || _dragOriginWindow == null) return;
-    final delta = d.globalPosition - _dragOriginPointer!;
-    final target = _dragOriginWindow! + delta;
-    try {
-      await windowManager.setPosition(target);
-    } catch (_) {}
-  }
-
-  void _onPanEnd(DragEndDetails d) {
-    _dragOriginPointer = null;
-    _dragOriginWindow = null;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onPanStart: _onPanStart,
-      onPanUpdate: _onPanUpdate,
-      onPanEnd: _onPanEnd,
-      behavior: HitTestBehavior.translucent,
-      child: widget.child,
-    );
-  }
-}
+// Removed custom _DragToMoveArea in favor of window_manager's native DragToMoveArea
 
 class WindowButtons extends StatelessWidget {
   const WindowButtons({super.key});
