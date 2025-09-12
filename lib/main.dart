@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
-import 'dart:io' show Platform;
+import 'dart:io' show Platform, exit;
 import 'package:flutter_quill/flutter_quill.dart' hide Text;
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -25,10 +25,24 @@ Future<void> main(List<String> args) async {
     await windowManager.ensureInitialized();
   } catch (_) {}
   Color? initial;
+  int currentWindowId = 0; // 0 => main window for desktop_multi_window
   double? argW, argH, argX, argY;
   if (args.isNotEmpty) {
     try {
-      final Map<String, dynamic> data = jsonDecode(args.first);
+      // desktop_multi_window passes: ['multi_window', windowId, argumentsJson]
+      // If not a multi-window boot, treat args.first as our payload directly.
+      String? payload;
+      if (args.first == 'multi_window') {
+        if (args.length > 1) {
+          currentWindowId = int.tryParse(args[1].toString()) ?? 0;
+        }
+        if (args.length > 2) payload = args[2];
+      } else {
+        payload = args.first;
+      }
+
+      final Map<String, dynamic> data =
+          payload != null ? jsonDecode(payload) as Map<String, dynamic> : {};
       final int? bg = data['bg'] as int?;
       if (bg != null) initial = Color(bg);
       final num? w = data['w'] as num?;
@@ -89,7 +103,7 @@ Future<void> main(List<String> args) async {
     }
   }
 
-  runApp(StickyNotesApp(initialBackground: initial));
+  runApp(StickyNotesApp(initialBackground: initial, windowId: currentWindowId));
 
   // Post-frame fallback: on secondary windows the early waitUntilReadyToShow
   // may have been skipped. Try to apply styling/focus again without blocking.
@@ -101,6 +115,16 @@ Future<void> main(List<String> args) async {
       );
       await windowManager.show();
       await windowManager.focus();
+      // If size/position were provided via args but early init failed,
+      // apply them here as a fallback to avoid overlapping windows.
+      try {
+        if (argW != null && argH != null) {
+          await windowManager.setSize(Size(argW!, argH!));
+        }
+        if (argX != null && argY != null) {
+          await windowManager.setPosition(Offset(argX!, argY!));
+        }
+      } catch (_) {}
     } catch (_) {
       // Ignore if window_manager isn't attached in this context.
     }
@@ -108,9 +132,10 @@ Future<void> main(List<String> args) async {
 }
 
 class StickyNotesApp extends StatelessWidget {
-  const StickyNotesApp({super.key, this.initialBackground});
+  const StickyNotesApp({super.key, this.initialBackground, this.windowId = 0});
 
   final Color? initialBackground;
+  final int windowId;
 
   @override
   Widget build(BuildContext context) {
@@ -126,21 +151,25 @@ class StickyNotesApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: StickyNotePage(initialBackground: initialBackground),
+      home: StickyNotePage(
+        initialBackground: initialBackground,
+        windowId: windowId,
+      ),
     );
   }
 }
 
 class StickyNotePage extends StatefulWidget {
-  const StickyNotePage({super.key, this.initialBackground});
+  const StickyNotePage({super.key, this.initialBackground, this.windowId = 0});
 
   final Color? initialBackground;
+  final int windowId; // 0 == main window
 
   @override
   State<StickyNotePage> createState() => _StickyNotePageState();
 }
 
-class _StickyNotePageState extends State<StickyNotePage> {
+class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
   late QuillController _quill;
   bool _menuOpen = false;
   late FocusNode _editorFocusNode;
@@ -173,10 +202,17 @@ class _StickyNotePageState extends State<StickyNotePage> {
       final newX = pos.dx + size.width + 16;
       final newY = pos.dy;
       final window = await DesktopMultiWindow.createWindow(
-        jsonEncode({'bg': color.value}),
+        jsonEncode({
+          'bg': color.value,
+          'w': size.width,
+          'h': size.height,
+          'x': newX,
+          'y': newY,
+        }),
       );
-      await window.setFrame(Rect.fromLTWH(newX, newY, size.width, size.height));
+      // Show first to ensure the native window exists, then set the frame.
       await window.show();
+      await window.setFrame(Rect.fromLTWH(newX, newY, size.width, size.height));
     } catch (_) {
       // Fallback: push a new page in the same window if multi-window is unavailable
       if (mounted) {
@@ -252,15 +288,70 @@ class _StickyNotePageState extends State<StickyNotePage> {
     _quill.onSelectionChanged = (_) => _syncFromController();
     // Initialize theme derived shades (allow caller to override initial color)
     _applyTheme(widget.initialBackground ?? _background);
+    // Intercept close so we can keep process alive until the last window closes
+    windowManager.addListener(this);
+    // Prevent native close; we'll decide behavior in onWindowClose
+    windowManager.setPreventClose(true);
+    // Basic method handler so other windows can check liveness (e.g., sub -> main ping)
+    DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
+      if (call.method == 'ping') return 'pong';
+      if (call.method == 'isVisible') {
+        try {
+          return await windowManager.isVisible();
+        } catch (_) {
+          return false;
+        }
+      }
+      return null;
+    });
   }
 
   @override
   void dispose() {
+    windowManager.removeListener(this);
     _editorFocusNode.dispose();
     _editorScrollController.dispose();
     _quill.removeListener(_syncFromController);
     _quill.dispose();
     super.dispose();
+  }
+
+  @override
+  void onWindowClose() {
+    () async {
+      // Determine if this is the main window (0) or a sub-window (>0)
+      final isMain = widget.windowId == 0;
+      // Current subwindow list (excludes main window id 0)
+      List<int> subIds = await DesktopMultiWindow.getAllSubWindowIds();
+
+      if (isMain) {
+        if (subIds.isEmpty) {
+          // No other windows remain; exit process so flutter run can rebuild cleanly
+          exit(0);
+        } else {
+          // Keep the process and engines alive for sub-windows; just hide main.
+          await windowManager.hide();
+        }
+      } else {
+        final isLastSub = subIds.length == 1 && subIds.first == widget.windowId;
+        // Check if main window is alive by pinging it
+        bool mainAlive = true;
+        bool mainVisible = false;
+        try {
+          final res = await DesktopMultiWindow.invokeMethod(0, 'isVisible');
+          if (res is bool) mainVisible = res;
+        } catch (_) {
+          mainAlive = false;
+        }
+        await windowManager.destroy();
+        if (isLastSub) {
+          // If main is gone or hidden, then we just closed the last visible window: exit.
+          if (!mainAlive || !mainVisible) {
+            Future.delayed(const Duration(milliseconds: 60), () => exit(0));
+          }
+        }
+      }
+    }();
   }
 
   void _preserveSelection(VoidCallback action) {
@@ -532,13 +623,17 @@ class _StickyNotePageState extends State<StickyNotePage> {
                           splashRadius: 18,
                           tooltip: 'More',
                         ),
-                        CloseWindowButton(
-                          colors: WindowButtonColors(
-                            mouseOver: Colors.red.shade400,
-                            mouseDown: Colors.red.shade700,
-                            iconNormal: Colors.white,
-                            iconMouseOver: Colors.white,
-                          ),
+                        IconButton(
+                          tooltip: 'Close',
+                          onPressed: () async {
+                            try {
+                              await windowManager.close();
+                            } catch (_) {
+                              await windowManager.destroy();
+                            }
+                          },
+                          icon: const Icon(Icons.close, color: Colors.white),
+                          splashRadius: 18,
                         ),
                       ],
                     ),
