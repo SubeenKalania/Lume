@@ -290,8 +290,11 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
     _applyTheme(widget.initialBackground ?? _background);
     // Intercept close so we can keep process alive until the last window closes
     windowManager.addListener(this);
-    // Prevent native close; we'll decide behavior in onWindowClose
-    windowManager.setPreventClose(true);
+    // Prevent native close; we'll decide behavior in onWindowClose.
+    // On secondary engines this method may be missing; ignore failures.
+    // Don't await inside initState.
+    // ignore: discarded_futures
+    windowManager.setPreventClose(true).catchError((_) {});
     // Basic method handler so other windows can check liveness (e.g., sub -> main ping)
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       if (call.method == 'ping') return 'pong';
@@ -314,6 +317,36 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
     _quill.removeListener(_syncFromController);
     _quill.dispose();
     super.dispose();
+  }
+
+  Future<void> _performCloseAction() async {
+    // Determine if this is the main window (0) or a sub-window (>0)
+    final isMain = widget.windowId == 0;
+    final subIds = await DesktopMultiWindow.getAllSubWindowIds();
+
+    if (isMain) {
+      if (subIds.isEmpty) {
+        exit(0);
+      } else {
+        await windowManager.hide();
+      }
+      return;
+    }
+
+    // Sub-window
+    bool mainAlive = true;
+    bool mainVisible = false;
+    try {
+      final res = await DesktopMultiWindow.invokeMethod(0, 'isVisible');
+      if (res is bool) mainVisible = res;
+    } catch (_) {
+      mainAlive = false;
+    }
+    final isLastSub = subIds.length == 1 && subIds.first == widget.windowId;
+    await windowManager.destroy();
+    if (isLastSub && (!mainAlive || !mainVisible)) {
+      Future.delayed(const Duration(milliseconds: 60), () => exit(0));
+    }
   }
 
   @override
@@ -625,13 +658,7 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
                         ),
                         IconButton(
                           tooltip: 'Close',
-                          onPressed: () async {
-                            try {
-                              await windowManager.close();
-                            } catch (_) {
-                              await windowManager.destroy();
-                            }
-                          },
+                          onPressed: _performCloseAction,
                           icon: const Icon(Icons.close, color: Colors.white),
                           splashRadius: 18,
                         ),
