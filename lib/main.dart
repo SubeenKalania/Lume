@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
+import 'dart:math' as math;
 import 'dart:io' show Platform, exit;
 import 'package:flutter_quill/flutter_quill.dart' hide Text;
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
@@ -245,26 +246,102 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
     await showDialog(
       context: context,
       builder: (ctx) {
-        return AlertDialog(
-          title: const Text('Choose theme color'),
-          content: SingleChildScrollView(
-            child: ColorPicker(
-              pickerColor: temp,
-              onColorChanged: (c) => temp = c,
-              enableAlpha: false,
-              labelTypes: const [],
+        final screenW = MediaQuery.of(ctx).size.width;
+        final width = math.min(520.0, screenW - 32.0);
+        final pickerW = width - 48.0; // padding margins
+        return Dialog(
+          insetPadding: const EdgeInsets.all(16),
+          backgroundColor: Colors.transparent,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxWidth: width),
+            child: Material(
+              color: _background.withOpacity(0.92),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(18)),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // App-style header bar
+                  Container(
+                    height: 44,
+                    decoration: BoxDecoration(
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(18)),
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [
+                          _headerShade.withOpacity(0.85),
+                          _headerShade.withOpacity(0.65),
+                        ],
+                      ),
+                      border: Border(
+                        bottom: BorderSide(color: _accentShade, width: 2),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        const SizedBox(width: 12),
+                        const Text(
+                          'Choose theme color',
+                          style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.w600,
+                            fontSize: 16,
+                          ),
+                        ),
+                        const Spacer(),
+                        IconButton(
+                          onPressed: () => Navigator.of(ctx).pop(),
+                          icon: const Icon(Icons.close, color: Colors.white),
+                          splashRadius: 18,
+                        ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+                    child: SingleChildScrollView(
+                      child: SizedBox(
+                        width: pickerW,
+                        child: ColorPicker(
+                          pickerColor: temp,
+                          onColorChanged: (c) => temp = c,
+                          enableAlpha: false,
+                          labelTypes: const [],
+                          // Use horizontal hue slider to avoid vertical overflow.
+                          paletteType: PaletteType.hsv,
+                        ),
+                      ),
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () => Navigator.of(ctx).pop(),
+                          child: Text('Cancel', style: TextStyle(color: _uiShade)),
+                        ),
+                        const SizedBox(width: 8),
+                        FilledButton(
+                          onPressed: () {
+                            _applyTheme(temp);
+                            Navigator.of(ctx).pop();
+                          },
+                          style: ButtonStyle(
+                            backgroundColor: WidgetStatePropertyAll(_accentShade),
+                            foregroundColor: const WidgetStatePropertyAll(Colors.white),
+                          ),
+                          child: const Text('Use Color'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.of(ctx).pop(), child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () {
-                _applyTheme(temp);
-                Navigator.of(ctx).pop();
-              },
-              child: const Text('Use Color'),
-            ),
-          ],
         );
       },
     );
