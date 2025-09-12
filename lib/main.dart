@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
+import 'dart:io' show Platform;
 import 'package:flutter_quill/flutter_quill.dart' hide Text;
 import 'package:flutter_colorpicker/flutter_colorpicker.dart';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
@@ -22,29 +23,87 @@ Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
     await windowManager.ensureInitialized();
-    await windowManager.setTitleBarStyle(
-      TitleBarStyle.hidden,
-      windowButtonVisibility: false,
-    );
   } catch (_) {}
   Color? initial;
+  double? argW, argH, argX, argY;
   if (args.isNotEmpty) {
     try {
       final Map<String, dynamic> data = jsonDecode(args.first);
       final int? bg = data['bg'] as int?;
       if (bg != null) initial = Color(bg);
+      final num? w = data['w'] as num?;
+      final num? h = data['h'] as num?;
+      final num? x = data['x'] as num?;
+      final num? y = data['y'] as num?;
+      if (w != null && h != null) {
+        argW = w.toDouble();
+        argH = h.toDouble();
+      }
+      if (x != null && y != null) {
+        argX = x.toDouble();
+        argY = y.toDouble();
+      }
     } catch (_) {}
+  }
+
+  // Configure the window (for both main and newly spawned windows)
+  const defaultSize = Size(600, 600);
+  final windowOptions = const WindowOptions(
+    titleBarStyle: TitleBarStyle.hidden,
+    windowButtonVisibility: false,
+  );
+  try {
+    await windowManager.waitUntilReadyToShow(windowOptions, () async {
+      await windowManager.setMinimumSize(defaultSize);
+      if (argW != null && argH != null) {
+        await windowManager.setSize(Size(argW!, argH!));
+      } else {
+        await windowManager.setSize(defaultSize);
+      }
+      if (argX != null && argY != null) {
+        await windowManager.setPosition(Offset(argX!, argY!));
+      } else {
+        await windowManager.center();
+      }
+      await windowManager.setTitle('Sticky Notes');
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  } catch (_) {
+    // In multi-window (desktop_multi_window) contexts, window_manager may not be
+    // attached during early startup of secondary windows. Avoid crashing; we'll
+    // continue and let the UI render, then attempt to focus later.
+  }
+
+  // On Windows, the runner is configured with BDW_HIDE_ON_STARTUP (bitsdojo_window),
+  // so explicitly show the window once it's ready.
+  if (Platform.isWindows) {
+    try {
+      doWhenWindowReady(() {
+        appWindow.show();
+        // Use window_manager to focus the window; bitsdojo_window doesn't expose focus().
+        windowManager.focus();
+      });
+    } catch (_) {
+      // bitsdojo_window may not manage secondary windows; ignore.
+    }
   }
 
   runApp(StickyNotesApp(initialBackground: initial));
 
-  doWhenWindowReady(() {
-    const initialSize = Size(600, 600);
-    appWindow.minSize = initialSize;
-    appWindow.size = initialSize;
-    appWindow.alignment = Alignment.center;
-    appWindow.title = "Sticky Notes";
-    appWindow.show();
+  // Post-frame fallback: on secondary windows the early waitUntilReadyToShow
+  // may have been skipped. Try to apply styling/focus again without blocking.
+  WidgetsBinding.instance.addPostFrameCallback((_) async {
+    try {
+      await windowManager.setTitleBarStyle(
+        TitleBarStyle.hidden,
+        windowButtonVisibility: false,
+      );
+      await windowManager.show();
+      await windowManager.focus();
+    } catch (_) {
+      // Ignore if window_manager isn't attached in this context.
+    }
   });
 }
 
@@ -108,12 +167,15 @@ class _StickyNotePageState extends State<StickyNotePage> {
     // Clone current theme; do not clone user data
     final color = _background;
     try {
+      final size = await windowManager.getSize();
+      final pos = await windowManager.getPosition();
+      // Place the new window immediately to the right of the current one
+      final newX = pos.dx + size.width + 16;
+      final newY = pos.dy;
       final window = await DesktopMultiWindow.createWindow(
         jsonEncode({'bg': color.value}),
       );
-      // Best-effort positioning; APIs vary by platform/plugins, so keep it minimal.
-      // window.center();
-      // window.setTitle('Sticky Notes');
+      await window.setFrame(Rect.fromLTWH(newX, newY, size.width, size.height));
       await window.show();
     } catch (_) {
       // Fallback: push a new page in the same window if multi-window is unavailable
