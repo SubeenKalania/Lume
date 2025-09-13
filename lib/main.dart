@@ -436,24 +436,27 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
     final subIds = await DesktopMultiWindow.getAllSubWindowIds();
 
     if (isMain) {
-      // Never exit the app automatically; just hide the main window when
-      // closed. Other windows continue to run if any exist.
-      await windowManager.hide();
+      // After closing main, remaining windows equal current sub-window count.
+      final remaining = subIds.length;
+      await windowManager.destroy();
+      if (remaining == 0) {
+        Future.delayed(const Duration(milliseconds: 60), () => exit(0));
+      }
       return;
     }
 
-    // Sub-window
+    // Sub-window: remaining = (sub count - 1) + (is main alive ? 1 : 0)
     bool mainAlive = true;
-    bool mainVisible = false;
     try {
-      final res = await DesktopMultiWindow.invokeMethod(0, 'isVisible');
-      if (res is bool) mainVisible = res;
+      await DesktopMultiWindow.invokeMethod(0, 'ping');
     } catch (_) {
       mainAlive = false;
     }
+    final remaining = (subIds.length - 1) + (mainAlive ? 1 : 0);
     await windowManager.destroy();
-    // Do not exit the app from a sub-window close. The process should remain
-    // alive as long as the main window exists (visible or hidden).
+    if (remaining == 0) {
+      Future.delayed(const Duration(milliseconds: 60), () => exit(0));
+    }
   }
 
   @override
@@ -465,11 +468,24 @@ class _StickyNotePageState extends State<StickyNotePage> with WindowListener {
       List<int> subIds = await DesktopMultiWindow.getAllSubWindowIds();
 
       if (isMain) {
-        // Keep the process alive; hide the main window instead of exiting.
-        await windowManager.hide();
-      } else {
+        final remaining = subIds.length; // after main closes
         await windowManager.destroy();
-        // Do not exit the app when a sub-window closes.
+        if (remaining == 0) {
+          Future.delayed(const Duration(milliseconds: 60), () => exit(0));
+        }
+      } else {
+        // Sub-window
+        bool mainAlive = true;
+        try {
+          await DesktopMultiWindow.invokeMethod(0, 'ping');
+        } catch (_) {
+          mainAlive = false;
+        }
+        final remaining = (subIds.length - 1) + (mainAlive ? 1 : 0);
+        await windowManager.destroy();
+        if (remaining == 0) {
+          Future.delayed(const Duration(milliseconds: 60), () => exit(0));
+        }
       }
     }();
   }
